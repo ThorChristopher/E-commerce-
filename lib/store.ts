@@ -197,6 +197,66 @@ const verifyPassword = (password: string, hashedPassword: string): boolean => {
   return hashPassword(password) === hashedPassword
 }
 
+// Default sample data
+const defaultProducts: Product[] = [
+  {
+    id: "1",
+    name: "PlayStation 5 Console",
+    price: 499.99,
+    originalPrice: 499.99,
+    discount: 0,
+    image: "https://images.unsplash.com/photo-1606144042614-b2417e99c4e3?w=400&h=400&fit=crop",
+    images: ["https://images.unsplash.com/photo-1606144042614-b2417e99c4e3?w=400&h=400&fit=crop"],
+    rating: 4.8,
+    reviews: 1250,
+    brand: "Sony",
+    category: "Gaming Consoles",
+    description:
+      "Experience lightning-fast loading with an ultra-high speed SSD, deeper immersion with support for haptic feedback, adaptive triggers and 3D Audio.",
+    specifications: ["Ultra-high speed SSD", "Ray Tracing", "4K Gaming", "3D Audio"],
+    inStock: true,
+    stockCount: 15,
+    featured: true,
+  },
+  {
+    id: "2",
+    name: "Xbox Series X",
+    price: 499.99,
+    originalPrice: 499.99,
+    discount: 0,
+    image: "https://images.unsplash.com/photo-1621259182978-fbf93132d53d?w=400&h=400&fit=crop",
+    images: ["https://images.unsplash.com/photo-1621259182978-fbf93132d53d?w=400&h=400&fit=crop"],
+    rating: 4.7,
+    reviews: 980,
+    brand: "Microsoft",
+    category: "Gaming Consoles",
+    description: "The fastest, most powerful Xbox ever. Experience next-gen speed and performance with Xbox Series X.",
+    specifications: ["12 TFLOPS GPU", "16GB GDDR6 RAM", "1TB NVMe SSD", "4K Gaming"],
+    inStock: true,
+    stockCount: 12,
+    featured: true,
+  },
+  {
+    id: "3",
+    name: "NVIDIA RTX 4080 Graphics Card",
+    price: 1199.99,
+    originalPrice: 1599.99,
+    discount: 25,
+    image: "https://images.unsplash.com/photo-1591488320449-011701bb6704?w=400&h=400&fit=crop",
+    images: ["https://images.unsplash.com/photo-1591488320449-011701bb6704?w=400&h=400&fit=crop"],
+    rating: 4.9,
+    reviews: 567,
+    brand: "NVIDIA",
+    category: "Graphics Cards",
+    description:
+      "The ultimate GeForce RTX 40 Series experience. Get equipped for stellar gaming and creating with NVIDIA RTX 4080.",
+    specifications: ["16GB GDDR6X", "Ray Tracing", "DLSS 3", "AV1 Encoding"],
+    inStock: true,
+    stockCount: 8,
+    featured: true,
+  },
+]
+
 export const useStore = create<StoreState>()(
   persist(
     (set, get) => ({
@@ -214,55 +274,97 @@ export const useStore = create<StoreState>()(
       isLoading: false,
       isInitialized: false,
 
-      // Initialize store
+      // Initialize store with timeout protection
       initializeStore: async () => {
         if (get().isInitialized) return
 
         set({ isLoading: true })
 
         try {
-          await get().loadFromServer()
-          set({ isInitialized: true })
+          // Try to load from server with timeout
+          const loadPromise = get().loadFromServer()
+          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Load timeout")), 5000))
+
+          await Promise.race([loadPromise, timeoutPromise])
         } catch (error) {
-          console.error("Failed to initialize store:", error)
-          set({ isInitialized: true })
+          console.warn("Failed to load from server, using default data:", error)
+
+          // Use default data if server fails
+          set({
+            products: defaultProducts,
+            paymentMethods: [
+              {
+                id: "1",
+                name: "PayPal",
+                type: "paypal",
+                email: "payments@thorpchristopher.com",
+                status: "active",
+                description: "Pay securely with PayPal",
+              },
+            ],
+          })
         } finally {
-          set({ isLoading: false })
+          set({ isInitialized: true, isLoading: false })
         }
       },
 
-      // Load data from server
+      // Load data from server with error handling
       loadFromServer: async () => {
         try {
           // Load products
-          const productsRes = await fetch("/api/products")
-          if (productsRes.ok) {
-            const products = await productsRes.json()
-            set({ products })
+          try {
+            const productsRes = await fetch("/api/products", {
+              method: "GET",
+              headers: { "Content-Type": "application/json" },
+            })
+            if (productsRes.ok) {
+              const products = await productsRes.json()
+              if (Array.isArray(products) && products.length > 0) {
+                set({ products })
+              } else {
+                set({ products: defaultProducts })
+              }
+            } else {
+              set({ products: defaultProducts })
+            }
+          } catch (error) {
+            console.warn("Failed to load products:", error)
+            set({ products: defaultProducts })
           }
 
-          // Load orders
-          const ordersRes = await fetch("/api/orders")
-          if (ordersRes.ok) {
-            const orders = await ordersRes.json()
-            set({ orders })
+          // Load other data with similar error handling
+          try {
+            const ordersRes = await fetch("/api/orders")
+            if (ordersRes.ok) {
+              const orders = await ordersRes.json()
+              set({ orders: Array.isArray(orders) ? orders : [] })
+            }
+          } catch (error) {
+            console.warn("Failed to load orders:", error)
           }
 
-          // Load users
-          const usersRes = await fetch("/api/users")
-          if (usersRes.ok) {
-            const users = await usersRes.json()
-            set({ users })
+          try {
+            const usersRes = await fetch("/api/users")
+            if (usersRes.ok) {
+              const users = await usersRes.json()
+              set({ users: Array.isArray(users) ? users : [] })
+            }
+          } catch (error) {
+            console.warn("Failed to load users:", error)
           }
 
-          // Load settings
-          const settingsRes = await fetch("/api/settings")
-          if (settingsRes.ok) {
-            const settings = await settingsRes.json()
-            set({ paymentMethods: settings.paymentMethods || [] })
+          try {
+            const settingsRes = await fetch("/api/settings")
+            if (settingsRes.ok) {
+              const settings = await settingsRes.json()
+              set({ paymentMethods: settings.paymentMethods || [] })
+            }
+          } catch (error) {
+            console.warn("Failed to load settings:", error)
           }
         } catch (error) {
           console.error("Failed to load from server:", error)
+          throw error
         }
       },
 
@@ -665,13 +767,22 @@ export const useStore = create<StoreState>()(
         })),
     }),
     {
-      name: "thorp-christopher-store-v7",
+      name: "thorp-christopher-store-v8",
       version: 1,
       storage: {
         getItem: (name) => safeLocalStorage.getItem(name),
         setItem: (name, value) => safeLocalStorage.setItem(name, value),
         removeItem: (name) => safeLocalStorage.removeItem(name),
       },
+      // Persist user session across refreshes
+      partialize: (state) => ({
+        currentUser: state.currentUser,
+        cart: state.cart,
+        users: state.users,
+        products: state.products,
+        orders: state.orders,
+        paymentMethods: state.paymentMethods,
+      }),
     },
   ),
 )

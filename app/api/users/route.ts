@@ -14,31 +14,44 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { action, user, email, users } = body
+    const { action, user, email, userId, users } = body
 
     switch (action) {
-      case "add":
-        const newUser = await db.createUser(user)
-        return NextResponse.json({ success: true, user: newUser })
-
-      case "login":
-        const existingUser = await db.prisma.user.findUnique({
-          where: { email },
-        })
-
-        if (existingUser) {
-          const updatedUser = await db.updateUser(existingUser.id, {
-            lastLogin: new Date(),
-          })
-          return NextResponse.json({ success: true, user: updatedUser })
-        } else {
-          // Create new user if doesn't exist
-          const newUser = await db.createUser({
-            email,
-            name: email.split("@")[0], // Use email prefix as name
-            lastLogin: new Date(),
+      case "register":
+        // Create new user in database
+        try {
+          const newUser = await db.prisma.user.create({
+            data: {
+              email: user.email,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              password: user.password,
+              isActive: user.isActive,
+            },
           })
           return NextResponse.json({ success: true, user: newUser })
+        } catch (error: any) {
+          if (error.code === "P2002") {
+            // Unique constraint violation
+            return NextResponse.json(
+              { success: false, message: "An account with this email already exists" },
+              { status: 400 },
+            )
+          }
+          throw error
+        }
+
+      case "login":
+        // Update last login time
+        try {
+          const updatedUser = await db.prisma.user.update({
+            where: { id: userId },
+            data: { lastLogin: new Date() },
+          })
+          return NextResponse.json({ success: true, user: updatedUser })
+        } catch (error) {
+          console.error("Error updating last login:", error)
+          return NextResponse.json({ success: true }) // Don't fail login if update fails
         }
 
       case "bulk_update":

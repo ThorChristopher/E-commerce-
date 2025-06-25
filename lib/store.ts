@@ -76,8 +76,10 @@ export interface User {
   email: string
   firstName: string
   lastName: string
+  password: string
   joinDate: string
   lastLogin: string
+  isActive: boolean
 }
 
 export interface PaymentMethod {
@@ -129,10 +131,17 @@ interface StoreState {
   // Reviews
   addReview: (review: Omit<Review, "id" | "date" | "helpful">) => void
 
-  // Users
-  addUser: (user: Omit<User, "id" | "joinDate" | "lastLogin">) => string
-  loginUser: (email: string) => void
+  // Users - Updated with proper authentication
+  registerUser: (userData: {
+    email: string
+    password: string
+    firstName: string
+    lastName: string
+  }) => Promise<{ success: boolean; message: string; user?: User }>
+  loginUser: (email: string, password: string) => Promise<{ success: boolean; message: string; user?: User }>
   logoutUser: () => void
+  checkEmailExists: (email: string) => boolean
+  updateUserLastLogin: (userId: string) => void
 
   // Payment Methods
   addPaymentMethod: (method: Omit<PaymentMethod, "id">) => void
@@ -176,6 +185,16 @@ const safeLocalStorage = {
       // Silently fail
     }
   },
+}
+
+// Simple password hashing (in production, use bcrypt)
+const hashPassword = (password: string): string => {
+  // Simple hash for demo - use bcrypt in production
+  return btoa(password + "salt_key_thorpchristopher")
+}
+
+const verifyPassword = (password: string, hashedPassword: string): boolean => {
+  return hashPassword(password) === hashedPassword
 }
 
 export const useStore = create<StoreState>()(
@@ -428,51 +447,158 @@ export const useStore = create<StoreState>()(
           ],
         })),
 
-      // Users
-      addUser: (user) => {
-        const userId = `USR-${Date.now()}`
-        const newUser = {
+      // Users - Updated with proper authentication
+      checkEmailExists: (email) => {
+        const state = get()
+        return state.users.some((user) => user.email.toLowerCase() === email.toLowerCase())
+      },
+
+      registerUser: async (userData) => {
+        const state = get()
+
+        // Check if email already exists
+        if (state.checkEmailExists(userData.email)) {
+          return {
+            success: false,
+            message: "An account with this email already exists. Please use a different email or try logging in.",
+          }
+        }
+
+        // Validate password strength
+        if (userData.password.length < 6) {
+          return {
+            success: false,
+            message: "Password must be at least 6 characters long.",
+          }
+        }
+
+        // Create new user
+        const newUser: User = {
+          id: `USR-${Date.now()}`,
+          email: userData.email.toLowerCase(),
+          firstName: userData.firstName,
+          lastName: userData.lastName,
+          password: hashPassword(userData.password),
+          joinDate: new Date().toISOString(),
+          lastLogin: new Date().toISOString(),
+          isActive: true,
+        }
+
+        // Add user to store
+        set((state) => ({
+          users: [...state.users, newUser],
+          currentUser: newUser,
+        }))
+
+        // Add activity
+        get().addActivity({
+          userId: newUser.id,
+          action: "register",
+          details: "User registered successfully",
+        })
+
+        // Sync to server
+        try {
+          await fetch("/api/users", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "register", user: newUser }),
+          })
+        } catch (error) {
+          console.error("Failed to sync user registration:", error)
+        }
+
+        return {
+          success: true,
+          message: "Account created successfully! Welcome to Thorp Christopher.",
+          user: newUser,
+        }
+      },
+
+      loginUser: async (email, password) => {
+        const state = get()
+
+        // Find user by email
+        const user = state.users.find((u) => u.email.toLowerCase() === email.toLowerCase())
+
+        if (!user) {
+          return {
+            success: false,
+            message: "No account found with this email address. Please sign up first.",
+          }
+        }
+
+        // Verify password
+        if (!verifyPassword(password, user.password)) {
+          return {
+            success: false,
+            message: "Incorrect password. Please try again.",
+          }
+        }
+
+        // Check if user is active
+        if (!user.isActive) {
+          return {
+            success: false,
+            message: "Your account has been deactivated. Please contact support.",
+          }
+        }
+
+        // Update last login
+        const updatedUser = {
           ...user,
-          id: userId,
-          joinDate: new Date().toISOString().split("T")[0],
           lastLogin: new Date().toISOString(),
         }
 
-        set((state) => ({ users: [...state.users, newUser] }))
+        // Update user in store
+        set((state) => ({
+          users: state.users.map((u) => (u.id === user.id ? updatedUser : u)),
+          currentUser: updatedUser,
+        }))
+
+        // Add activity
+        get().addActivity({
+          userId: user.id,
+          action: "login",
+          details: "User logged in successfully",
+        })
 
         // Sync to server
-        fetch("/api/users", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "add", user: newUser }),
-        }).catch(console.error)
+        try {
+          await fetch("/api/users", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "login", email, userId: user.id }),
+          })
+        } catch (error) {
+          console.error("Failed to sync user login:", error)
+        }
 
-        return userId
+        return {
+          success: true,
+          message: `Welcome back, ${user.firstName}!`,
+          user: updatedUser,
+        }
       },
 
-      loginUser: (email) =>
-        set((state) => {
-          const user = state.users.find((user) => user.email === email)
-          if (user) {
-            const updatedUser = { ...user, lastLogin: new Date().toISOString() }
-            const newUsers = state.users.map((u) => (u.id === user.id ? updatedUser : u))
+      logoutUser: () => {
+        const state = get()
+        if (state.currentUser) {
+          get().addActivity({
+            userId: state.currentUser.id,
+            action: "logout",
+            details: "User logged out",
+          })
+        }
+        set({ currentUser: null })
+      },
 
-            // Sync to server
-            fetch("/api/users", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ action: "login", email }),
-            }).catch(console.error)
-
-            return {
-              users: newUsers,
-              currentUser: updatedUser,
-            }
-          }
-          return { currentUser: null }
-        }),
-
-      logoutUser: () => set({ currentUser: null }),
+      updateUserLastLogin: (userId) =>
+        set((state) => ({
+          users: state.users.map((user) =>
+            user.id === userId ? { ...user, lastLogin: new Date().toISOString() } : user,
+          ),
+        })),
 
       // Payment Methods
       addPaymentMethod: (method) =>
@@ -539,7 +665,7 @@ export const useStore = create<StoreState>()(
         })),
     }),
     {
-      name: "thorp-christopher-store-v6",
+      name: "thorp-christopher-store-v7",
       version: 1,
       storage: {
         getItem: (name) => safeLocalStorage.getItem(name),

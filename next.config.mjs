@@ -16,8 +16,8 @@ const nextConfig = {
     ],
     unoptimized: true,
   },
-  trailingSlash: true, // keep if you're using static routing
-  output: 'export'      // IMPORTANT: For Netlify static site export
+  trailingSlash: true,
+  // output: 'export' // ❌ Disable static export for dynamic routes to work
 }
 
 export default nextConfig
